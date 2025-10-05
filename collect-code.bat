@@ -58,13 +58,14 @@ echo ------------------------------------------------------------
 echo.
 
 :: ============================================================
-:: PowerShell inline logic
+:: PowerShell inline logic (with counts)
 :: ============================================================
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$Root = '%ROOT%';" ^
   "$OutFile = '%OUTFILE%';" ^
   "$ignoreFolders = @('node_modules', '.git', '.vscode', 'dist', 'build');" ^
   "$extensions = @('%EXTS%'.Split(',') | ForEach-Object { $_.Trim() });" ^
+  "$fileCount = 0; $lineCount = 0;" ^
   "function Test-IsTextFile($Path) { " ^
   "  try { $bytes = Get-Content -Path $Path -Encoding Byte -TotalCount 200 -ErrorAction Stop; " ^
   "    if (-not $bytes) { return $true }; " ^
@@ -78,13 +79,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "  $extOK = $extensions -contains $_.Extension.ToLower(); " ^
   "  $include -and $extOK } | ForEach-Object { " ^
   "  if (Test-IsTextFile $_.FullName) { " ^
-  "    Write-Host ('Processing ' + $_.FullName); " ^
-  "    $out += ('='*43 + \"`r`nFile: \" + $_.FullName + \"`r`n`r`n\"); " ^
-  "    $out += (Get-Content -Raw -Path $_.FullName) + \"`r`n`r`n\" } };" ^
+  "    $fileCount++; " ^
+  "    $text = Get-Content -Raw -Path $_.FullName; " ^
+  "    $lines = ($text -split \"`r?`n\").Count; " ^
+  "    $lineCount += $lines; " ^
+  "    Write-Host ('Processing ' + $_.FullName + ' [' + $lines + ' lines]'); " ^
+  "    $out += ('='*43 + \"`r`nFile: \" + $_.FullName + \"`r`nLines: \" + $lines + \"`r`n`r`n\"); " ^
+  "    $out += $text + \"`r`n`r`n\" } };" ^
   "if ($out) { " ^
+  "  $summary = ('='*43 + \"`r`nTotal files: $fileCount`r`nTotal lines: $lineCount`r`n`r`n\"); " ^
+  "  $out += $summary; " ^
   "  Set-Content -Path $OutFile -Value $out -Encoding UTF8; " ^
-  "  Write-Host ('Done! Saved to ' + $OutFile) } " ^
-  "else { Write-Host 'No text files matched.' }"
+  "  Write-Host ('`n✅ Done! Saved to ' + $OutFile); " ^
+  "  Write-Host ('Total files processed: ' + $fileCount); " ^
+  "  Write-Host ('Total lines counted:  ' + $lineCount) } " ^
+  "else { Write-Host '⚠️  No text files matched.' }"
 
 endlocal
 exit /b
@@ -101,7 +110,9 @@ echo.
 echo  DESCRIPTION:
 echo    Scans a folder and its subfolders for code files with
 echo    specific extensions, then combines them into one UTF-8
-echo    text file. Each file is preceded by its full path.
+echo    text file. Each file is preceded by its full path and
+echo    line count.  The script also prints a final summary of
+echo    total files processed and total lines counted.
 echo.
 echo  SYNTAX:
 echo    collect-code [options]
@@ -114,11 +125,16 @@ echo                   e.g. ".js,.ts,.json,.html,.css"
 echo    -h            Show this help information
 echo.
 echo  NOTES:
-echo    • Existing output files are OVERWRITTEN on each run.
+echo    • Existing output files are OVERWRITTEN each run.
 echo      (Change Set-Content to Add-Content in the script to append instead.)
 echo    • These folders are ignored automatically:
 echo         node_modules, .git, .vscode, dist, build
 echo    • Output is UTF-8 encoded.
+echo.
+echo  OUTPUT SUMMARY:
+echo    - Total files processed
+echo    - Total lines of code counted
+echo    - Combined file written to the chosen output file
 echo.
 echo  EXAMPLES:
 echo    collect-code
