@@ -1,139 +1,139 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
-:: --- Default values ---
-set "outfile=checked-code.txt"
-set "extensions=.js .ts .jsx .tsx .html .css .scss .json .md .bat .cmd .ps1 .py .java .cpp .c .h .hpp .cs .php .rb .sh .xml .yml .yaml"
-set "ignoreFolders=.vscode node_modules .git"
+:: ============================================================
+:: Default values
+:: ============================================================
+set "ROOT=%cd%"
+set "OUTFILE=%cd%\collected-code.txt"
+set "EXTS=.js,.json,.html,.css,.ts"
+set "SHOWHELP="
 
-:: --- Parse arguments ---
-:parse_args
-if "%~1"=="" goto after_args
+:: ============================================================
+:: Parse command-line flags
+:: ============================================================
+:parse
+if "%~1"=="" goto after_parse
 
-if /i "%~1"=="-f" (
-    set "outfile=%~2"
+if /i "%~1"=="-h" (
+    set "SHOWHELP=1"
+    shift
+    goto after_parse
+)
+
+if /i "%~1"=="-r" (
+    set "ROOT=%~2"
     shift & shift
-    goto parse_args
+    goto parse
+)
+
+if /i "%~1"=="-o" (
+    set "OUTFILE=%~2"
+    shift & shift
+    goto parse
 )
 
 if /i "%~1"=="-e" (
-    set "extensions=%~2"
+    set "EXTS=%~2"
     shift & shift
-    goto parse_args
-)
-
-if /i "%~1"=="-i" (
-    set "ignoreFolders=%~2"
-    shift & shift
-    goto parse_args
-)
-
-if /i "%~1"=="-h" (
-    call :show_help
-    exit /b 0
+    goto parse
 )
 
 shift
-goto parse_args
+goto parse
 
-:after_args
+:after_parse
+if defined SHOWHELP goto :show_help
 
-set "scriptName=%~f0"
-set /a "fileCount=0"
-
-echo.
+:: ============================================================
+:: Info banner
+:: ============================================================
 echo ------------------------------------------------------------
 echo  Collecting code files...
 echo ------------------------------------------------------------
-echo Output file: %outfile%
-echo Extensions : %extensions%
-echo Ignored folders: %ignoreFolders%
-echo Skipping script: %scriptName%
+echo Root folder : %ROOT%
+echo Output file : %OUTFILE%
+echo Extensions  : %EXTS%
 echo ------------------------------------------------------------
 echo.
 
-:: --- Traverse all files recursively ---
-for /r %%F in (*) do (
-    set "file=%%F"
-    set "skip="
-    set "ext=%%~xF"
-    set "folder=%%~dpF"
+:: ============================================================
+:: PowerShell inline logic
+:: ============================================================
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$Root = '%ROOT%';" ^
+  "$OutFile = '%OUTFILE%';" ^
+  "$ignoreFolders = @('node_modules', '.git', '.vscode', 'dist', 'build');" ^
+  "$extensions = @('%EXTS%'.Split(',') | ForEach-Object { $_.Trim() });" ^
+  "function Test-IsTextFile($Path) { " ^
+  "  try { $bytes = Get-Content -Path $Path -Encoding Byte -TotalCount 200 -ErrorAction Stop; " ^
+  "    if (-not $bytes) { return $true }; " ^
+  "    foreach ($b in $bytes) { " ^
+  "      if (($b -lt 9 -and $b -ne 9 -and $b -ne 10 -and $b -ne 13) -or $b -gt 126) { return $false } };" ^
+  "    return $true } catch { return $false } };" ^
+  "$out = ''; " ^
+  "Get-ChildItem -Path $Root -Recurse -File | Where-Object { " ^
+  "  $include=$true; foreach ($ignore in $ignoreFolders) { " ^
+  "    if ($_.FullName -match ('\\' + [regex]::Escape($ignore) + '(\\|$)')) { $include=$false; break } };" ^
+  "  $extOK = $extensions -contains $_.Extension.ToLower(); " ^
+  "  $include -and $extOK } | ForEach-Object { " ^
+  "  if (Test-IsTextFile $_.FullName) { " ^
+  "    Write-Host ('Processing ' + $_.FullName); " ^
+  "    $out += ('='*43 + \"`r`nFile: \" + $_.FullName + \"`r`n`r`n\"); " ^
+  "    $out += (Get-Content -Raw -Path $_.FullName) + \"`r`n`r`n\" } };" ^
+  "if ($out) { " ^
+  "  Set-Content -Path $OutFile -Value $out -Encoding UTF8; " ^
+  "  Write-Host ('Done! Saved to ' + $OutFile) } " ^
+  "else { Write-Host 'No text files matched.' }"
 
-    :: --- Skip this script itself ---
-    if /i "!file!"=="%scriptName%" set "skip=1"
-
-    :: --- Check ignored folders ---
-    for %%I in (%ignoreFolders%) do (
-        echo !folder! | findstr /i "\\%%I\\" >nul
-        if not errorlevel 1 set "skip=1"
-    )
-
-    :: --- If not skipped, check extension ---
-    if not defined skip (
-        for %%E in (%extensions%) do (
-            if /i "%%E"=="!ext!" (
-                if !fileCount! EQU 0 (
-                    :: --- Create output file only once, when first match found ---
-                    echo ==== Combined Code Files ==== > "%outfile%"
-                    echo [Created output file: %outfile%]
-                )
-                set /a "fileCount+=1"
-                echo [Adding] !file!
-                >> "%outfile%" echo --------------------------------------------------
-                >> "%outfile%" echo FILE: !file!
-                >> "%outfile%" echo --------------------------------------------------
-                type "!file!" >> "%outfile%"
-                echo. >> "%outfile%"
-                echo. >> "%outfile%"
-            )
-        )
-    )
-)
-
-if %fileCount% EQU 0 (
-    echo [!] No matching code files found. No file created.
-    if exist "%outfile%" del "%outfile%"
-) else (
-    echo [OK] Finished collecting %fileCount% files into %outfile%.
-)
-
-pause
 endlocal
-exit /b 0
+exit /b
 
 
-:: -----------------------------------------------------------------
-::  Helper Section (-h)
-:: -----------------------------------------------------------------
+:: ============================================================
+:: Helper Section (-h)
+:: ============================================================
 :show_help
+echo ============================================================
+echo  collect-code.bat  —  Combine code/text files recursively
+echo ============================================================
 echo.
-echo =============================================================
-echo  collect_code.bat - Combine code files into one text file
-echo =============================================================
+echo  DESCRIPTION:
+echo    Scans a folder and its subfolders for code files with
+echo    specific extensions, then combines them into one UTF-8
+echo    text file. Each file is preceded by its full path.
 echo.
-echo  USAGE:
-echo    collect_code.bat [options]
+echo  SYNTAX:
+echo    collect-code [options]
 echo.
 echo  OPTIONS:
-echo    -f [filename]   Set output file name  (default: checked-code.txt)
-echo    -e [extensions] Space-separated list of extensions to include
-echo                    (default: common code file types)
-echo    -i [folders]    Space-separated list of folders to ignore
-echo                    (default: .vscode node_modules .git)
-echo    -h              Show this help information
-echo.
-echo  EXAMPLES:
-echo    collect_code.bat
-echo    collect_code.bat -f all.txt
-echo    collect_code.bat -e ".js .py .html"
-echo    collect_code.bat -i "node_modules dist build"
-echo    collect_code.bat -f output.txt -e ".js .ts" -i ".git .vscode"
+echo    -r [folder]   Root directory to scan (default: current)
+echo    -o [file]     Output file path (default: collected-code.txt)
+echo    -e [exts]     Comma-separated extensions to include
+echo                   e.g. ".js,.ts,.json,.html,.css"
+echo    -h            Show this help information
 echo.
 echo  NOTES:
-echo    - The script searches recursively in all subfolders.
-echo    - The output file is only created if at least one match is found.
-echo    - The script file itself is automatically skipped.
-echo    - ASCII-only output for maximum compatibility.
-echo =============================================================
+echo    • Existing output files are OVERWRITTEN on each run.
+echo      (Change Set-Content to Add-Content in the script to append instead.)
+echo    • These folders are ignored automatically:
+echo         node_modules, .git, .vscode, dist, build
+echo    • Output is UTF-8 encoded.
 echo.
+echo  EXAMPLES:
+echo    collect-code
+echo       → Scan current folder with defaults.
+echo.
+echo    collect-code -r "C:\dev\PixReaper"
+echo       → Scan that project folder.
+echo.
+echo    collect-code -r . -o allcode.txt
+echo       → Save combined file as allcode.txt.
+echo.
+echo    collect-code -r . -e ".js,.ts,.json"
+echo       → Include only JavaScript, TypeScript, and JSON.
+echo.
+echo    collect-code -r "C:\dev" -o output.txt -e ".py,.bat"
+echo       → Combine Python and batch scripts only.
+echo ============================================================
 exit /b 0
